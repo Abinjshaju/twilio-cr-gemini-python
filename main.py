@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import uvicorn
 from google import genai
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Form
@@ -11,9 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 PORT = int(os.getenv("PORT", "8520"))
-DOMAIN = os.getenv("NGROK_URL")
+DOMAIN = os.getenv("DOMAIN")
 if not DOMAIN:
-    raise ValueError("NGROK_URL environment variable not set.")
+    raise ValueError("DOMAIN environment variable not set.")
 # Strip protocol prefix if present
 DOMAIN = DOMAIN.replace("https://", "").replace("http://", "").rstrip("/")
 WS_URL = f"wss://{DOMAIN}/ws"
@@ -47,9 +48,9 @@ sessions = {}
 # Create FastAPI app
 app = FastAPI()
 
-def gemini_response(chat_session, user_prompt):
+async def gemini_response(chat_session, user_prompt):
     """Get a response from the Gemini API."""
-    response = chat_session.send_message(user_prompt)
+    response = await asyncio.to_thread(chat_session.send_message, user_prompt)
     return response.text
 
 @app.post("/twiml")
@@ -89,7 +90,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 call_sid = message["callSid"]
                 print(f"Setup for call: {call_sid}")
                 # Start a new Gemini chat session for this call
-                sessions[call_sid] = client.chats.create(
+                sessions[call_sid] = await asyncio.to_thread(
+                    client.chats.create,
                     model="gemini-2.5-flash",
                     config={"system_instruction": SYSTEM_PROMPT}
                 )
@@ -103,7 +105,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"Processing prompt: {user_prompt}")
                 
                 chat_session = sessions[call_sid]
-                response_text = gemini_response(chat_session, user_prompt)
+                response_text = await gemini_response(chat_session, user_prompt)
                 
                 # Send the response back; ConversationRelay handles TTS.
                 await websocket.send_text(
@@ -130,4 +132,4 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     print(f"Starting server on port {PORT}")
     print(f"WebSocket URL for Twilio: {WS_URL}")
-    uvicorn.run(app, host="0.0.0.0", port=8520)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
